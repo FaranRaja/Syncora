@@ -54,22 +54,31 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ friend, onViewProfile }) => {
   useEffect(() => {
     fetchMessages();
 
-    if (!user || !friend) return;
+    if (!user) return;
 
+    // Subscribe to all message inserts and filter client-side for reliability
     const channel = supabase
-      .channel(`messages-${user.id}-${friend.id}`)
+      .channel(`messages-${user.id}`)
       .on(
         'postgres_changes',
         {
           event: 'INSERT',
           schema: 'public',
           table: 'messages',
-          filter: `or(and(sender_id.eq.${user.id},receiver_id.eq.${friend.id}),and(sender_id.eq.${friend.id},receiver_id.eq.${user.id}))`
         },
         (payload) => {
           const newMsg = payload.new as Message;
-          // Debug log to help with realtime issues
           console.debug('Realtime message received', { newMsg });
+
+          // If we don't have a selected friend, ignore unless it's addressed to the current user
+          if (!friend) return;
+
+          const isRelevant =
+            (newMsg.sender_id === user.id && newMsg.receiver_id === friend.id) ||
+            (newMsg.sender_id === friend.id && newMsg.receiver_id === user.id);
+
+          if (!isRelevant) return;
+
           setMessages(prev => {
             // Avoid duplicates
             if (prev.some(m => m.id === newMsg.id)) return prev;
@@ -79,8 +88,17 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ friend, onViewProfile }) => {
       )
       .subscribe();
 
+    console.debug('Subscribed to messages channel', channel);
+
+    // Poll fallback: fetch messages periodically in case realtime events are missed
+    const pollInterval = setInterval(() => {
+      fetchMessages();
+    }, 3000);
+
     return () => {
+      console.debug('Unsubscribing messages channel', channel);
       supabase.removeChannel(channel);
+      clearInterval(pollInterval);
     };
   }, [user, friend]);
 
@@ -188,6 +206,8 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ friend, onViewProfile }) => {
         .single();
 
       if (error) throw error;
+
+      console.debug('Message inserted into DB', data);
 
       // Add message to local state immediately
       if (data) {
