@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useLayoutEffect, useState, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { Profile, Message } from '@/types/database';
@@ -21,7 +21,7 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ friend, onViewProfile }) => {
   const [loading, setLoading] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-  const scrollRef = useRef<HTMLDivElement>(null);
+  const viewportRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { user } = useAuth();
   const { toast } = useToast();
@@ -64,10 +64,12 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ friend, onViewProfile }) => {
           event: 'INSERT',
           schema: 'public',
           table: 'messages',
-          filter: `or(and(sender_id=eq.${user.id},receiver_id=eq.${friend.id}),and(sender_id=eq.${friend.id},receiver_id=eq.${user.id}))`
+          filter: `or(and(sender_id.eq.${user.id},receiver_id.eq.${friend.id}),and(sender_id.eq.${friend.id},receiver_id.eq.${user.id}))`
         },
         (payload) => {
           const newMsg = payload.new as Message;
+          // Debug log to help with realtime issues
+          console.debug('Realtime message received', { newMsg });
           setMessages(prev => {
             // Avoid duplicates
             if (prev.some(m => m.id === newMsg.id)) return prev;
@@ -82,9 +84,11 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ friend, onViewProfile }) => {
     };
   }, [user, friend]);
 
-  useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+  useLayoutEffect(() => {
+    const el = viewportRef.current;
+    if (el) {
+      // Jump to bottom immediately after messages change
+      el.scrollTo({ top: el.scrollHeight, behavior: 'auto' });
     }
   }, [messages]);
 
@@ -281,7 +285,7 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ friend, onViewProfile }) => {
       </div>
 
       {/* Messages */}
-      <ScrollArea className="flex-1 p-4" ref={scrollRef}>
+      <ScrollArea className="flex-1 p-4" viewportRef={viewportRef}>
         <div className="space-y-4">
           {messages.map((message) => {
             const isOwn = message.sender_id === user?.id;
@@ -295,7 +299,7 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ friend, onViewProfile }) => {
               >
                 <div
                   className={cn(
-                    "max-w-[70%] rounded-2xl px-4 py-2",
+                    "max-w-[70%] md:max-w-[60%] lg:max-w-[50%] rounded-2xl px-4 py-2",
                     isOwn 
                       ? "bg-primary text-primary-foreground rounded-br-md" 
                       : "bg-muted rounded-bl-md"
